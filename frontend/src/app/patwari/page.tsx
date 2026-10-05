@@ -1371,8 +1371,18 @@ export default function PatwariPage() {
       toast("Maximum 25 Ground Control Points reached for this sector.", { icon: "ℹ️" });
       return;
     }
-    setGcpPoints((prev) => [...prev, pt]);
-    toast.success(`Dropped ${pt.label} at [${pt.lat.toFixed(6)}° N, ${pt.lng.toFixed(6)}° E]`, { icon: "📍" });
+    setGcpPoints((prev) => {
+      const safeId = prev.some((p) => p.id === pt.id)
+        ? (prev.length > 0 ? Math.max(...prev.map((p) => p.id)) + 1 : 1)
+        : pt.id;
+      const safePt: GCPPoint = {
+        ...pt,
+        id: safeId,
+        label: pt.label && !pt.label.startsWith("GCP #") ? pt.label : `GCP #${safeId}`,
+      };
+      return [...prev, safePt];
+    });
+    toast.success(`Dropped ${pt.label || `GCP #${pt.id}`} at [${pt.lat.toFixed(6)}° N, ${pt.lng.toFixed(6)}° E]`, { icon: "📍" });
   };
 
   // Reset all GCP points and pairs (Phase 5)
@@ -3641,6 +3651,95 @@ export default function PatwariPage() {
                     <UploadCloud size={14} />
                     <span>Upload Studio</span>
                   </button>
+
+                  <div style={{ width: 1, height: 20, background: "var(--border-subtle)", flexShrink: 0 }} />
+                  <button
+                    onClick={() => {
+                      const next = !enableGcpPlacement;
+                      setEnableGcpPlacement(next);
+                      if (next) {
+                        toast.success("GCP Drop Mode Enabled: Click anywhere on the map to anchor a Ground Control Point.", { icon: "📍", duration: 3500 });
+                      } else {
+                        toast("GCP Drop Mode Paused", { icon: "⏸️" });
+                      }
+                    }}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "5px 12px",
+                      borderRadius: "var(--radius-sm)",
+                      background: enableGcpPlacement
+                        ? "linear-gradient(135deg, #0D9488 0%, #059669 100%)"
+                        : "#FFFFFF",
+                      border: enableGcpPlacement ? "1.5px solid #0F766E" : "1px solid #99F6E4",
+                      color: enableGcpPlacement ? "#FFFFFF" : "#0F766E",
+                      fontSize: "0.8125rem",
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                      boxShadow: enableGcpPlacement
+                        ? "0 2px 10px rgba(13, 148, 136, 0.35)"
+                        : "0 1px 3px rgba(0, 0, 0, 0.05)",
+                      transition: "all 0.15s ease",
+                    }}
+                    title={enableGcpPlacement ? "Click to exit GCP placement mode" : "Enable GCP placement mode to drop control points on map"}
+                  >
+                    <Crosshair size={14} className={enableGcpPlacement ? "animate-spin" : ""} style={{ animationDuration: "6s" }} />
+                    <span>{enableGcpPlacement ? "Drop GCP (Active)" : "Drop GCP"}</span>
+                    {gcpPoints.length > 0 && (
+                      <span
+                        style={{
+                          background: enableGcpPlacement ? "rgba(255, 255, 255, 0.25)" : "#CCFBF1",
+                          color: enableGcpPlacement ? "#FFFFFF" : "#0F766E",
+                          padding: "1px 6px",
+                          borderRadius: 10,
+                          fontSize: "0.68rem",
+                          fontWeight: 800,
+                        }}
+                      >
+                        {gcpPoints.length}
+                      </span>
+                    )}
+                  </button>
+
+                  <div style={{ width: 1, height: 20, background: "var(--border-subtle)", flexShrink: 0 }} />
+                  <button
+                    onClick={() => setShowCalibrationDrawer(true)}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "5px 12px",
+                      borderRadius: "var(--radius-sm)",
+                      background: (gcpPoints.length > 0 || gcpPairs.length > 0) ? "#FEF3C7" : "#F8FAFC",
+                      border: (gcpPoints.length > 0 || gcpPairs.length > 0) ? "1px solid #FCD34D" : "1px solid #E2E8F0",
+                      color: (gcpPoints.length > 0 || gcpPairs.length > 0) ? "#92400E" : "#64748B",
+                      fontSize: "0.8125rem",
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                      transition: "all 0.15s ease",
+                    }}
+                    title="Open Thin-Plate Spline (TPS) Warping & Landmark Calibration"
+                  >
+                    <Sliders size={14} />
+                    <span>TPS Calibration</span>
+                    {(gcpPoints.length > 0 || gcpPairs.length > 0) && (
+                      <span
+                        style={{
+                          background: "#FDE68A",
+                          color: "#78350F",
+                          padding: "1px 6px",
+                          borderRadius: 10,
+                          fontSize: "0.68rem",
+                          fontWeight: 800,
+                        }}
+                      >
+                        {pairedGcpMode ? gcpPairs.length : gcpPoints.length}
+                      </span>
+                    )}
+                  </button>
                 </>
               )}
 
@@ -3776,6 +3875,133 @@ export default function PatwariPage() {
                 >
                   <X size={14} />
                   <span>Discard</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Active GCP Placement Mode Guidance Dock */}
+          {enableGcpPlacement && (
+            <div
+              className="animate-fade-in-up"
+              style={{
+                position: "absolute",
+                top: 16,
+                left: "50%",
+                transform: "translateX(-50%)",
+                zIndex: 450,
+                background: "rgba(15, 23, 42, 0.92)",
+                backdropFilter: "blur(16px)",
+                WebkitBackdropFilter: "blur(16px)",
+                border: "1.5px solid #0D9488",
+                borderRadius: 14,
+                padding: "8px 18px",
+                boxShadow: "0 12px 32px rgba(0, 0, 0, 0.35)",
+                display: "flex",
+                alignItems: "center",
+                gap: 14,
+                color: "#FFFFFF",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: "50%",
+                    background: "#10B981",
+                    boxShadow: "0 0 10px #10B981",
+                    animation: "pulse 1.5s infinite",
+                  }}
+                />
+                <span style={{ fontSize: "0.85rem", fontWeight: 800, color: "#F8FAFC" }}>
+                  GCP Drop Mode Active
+                </span>
+              </div>
+
+              <div style={{ width: 1, height: 20, background: "rgba(255, 255, 255, 0.2)" }} />
+
+              <span style={{ fontSize: "0.78rem", color: "#CBD5E1" }}>
+                Click any map location or parcel landmark to place a Ground Control Point.
+              </span>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.78rem" }}>
+                <span style={{ color: "#94A3B8" }}>Placed:</span>
+                <strong style={{ color: "#34D399", fontSize: "0.85rem" }}>
+                  {gcpPoints.length}
+                </strong>
+                <span style={{ color: "#94A3B8", fontSize: "0.72rem" }}>
+                  ({Math.max(0, 3 - gcpPoints.length) === 0 ? "Ready for TPS" : `${3 - gcpPoints.length} more needed`})
+                </span>
+              </div>
+
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <button
+                  onClick={() => setShowCalibrationDrawer(true)}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    padding: "5px 12px",
+                    borderRadius: 6,
+                    background: gcpPoints.length >= 3
+                      ? "linear-gradient(135deg, #059669 0%, #10B981 100%)"
+                      : "rgba(255, 255, 255, 0.12)",
+                    border: "none",
+                    color: "#FFFFFF",
+                    fontWeight: 800,
+                    fontSize: "0.75rem",
+                    cursor: "pointer",
+                    boxShadow: gcpPoints.length >= 3 ? "0 2px 8px rgba(16, 185, 129, 0.4)" : "none",
+                  }}
+                  title="Configure TPS Spline & Warping Parameters"
+                >
+                  <Sliders size={13} />
+                  <span>TPS Calibration</span>
+                </button>
+
+                {gcpPoints.length > 0 && (
+                  <button
+                    onClick={handleResetGcps}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      padding: "5px 10px",
+                      borderRadius: 6,
+                      background: "rgba(239, 68, 68, 0.2)",
+                      border: "1px solid rgba(239, 68, 68, 0.4)",
+                      color: "#FCA5A5",
+                      fontWeight: 700,
+                      fontSize: "0.75rem",
+                      cursor: "pointer",
+                    }}
+                    title="Clear all dropped GCPs"
+                  >
+                    <RotateCcw size={12} />
+                    <span>Clear</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={() => setEnableGcpPlacement(false)}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    padding: "5px 10px",
+                    borderRadius: 6,
+                    background: "rgba(255, 255, 255, 0.15)",
+                    border: "1px solid rgba(255, 255, 255, 0.2)",
+                    color: "#FFFFFF",
+                    fontWeight: 700,
+                    fontSize: "0.75rem",
+                    cursor: "pointer",
+                  }}
+                  title="Exit GCP Drop Mode"
+                >
+                  <X size={13} />
+                  <span>Done</span>
                 </button>
               </div>
             </div>

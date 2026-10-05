@@ -283,6 +283,8 @@ function InteractiveMapHandler({
   enableSingleGcp,
   onAddSingleGcp,
   singleGcpCount,
+  gcpPoints = [],
+  onGcpClick,
   enableBbox,
   onBboxSelected,
   enablePairedGcp,
@@ -293,6 +295,8 @@ function InteractiveMapHandler({
   enableSingleGcp: boolean;
   onAddSingleGcp?: (p: GCPPoint) => void;
   singleGcpCount: number;
+  gcpPoints?: GCPPoint[];
+  onGcpClick?: (coords: [number, number]) => void;
   enableBbox: boolean;
   onBboxSelected?: (bbox: [number, number, number, number]) => void;
   enablePairedGcp: boolean;
@@ -310,6 +314,12 @@ function InteractiveMapHandler({
       // Phase 3 constraint: strictly reject clicks outside active map canvas bounds
       const bounds = map.getBounds();
       if (!bounds.contains(e.latlng)) {
+        return;
+      }
+
+      // If universal GCP click handler is provided and GCP mode is active:
+      if ((enableSingleGcp || enablePairedGcp) && onGcpClick) {
+        onGcpClick([Number(e.latlng.lat.toFixed(6)), Number(e.latlng.lng.toFixed(6))]);
         return;
       }
 
@@ -335,9 +345,10 @@ function InteractiveMapHandler({
           const dispM = Math.sqrt(dx * dx + dy * dy);
           const errPx = dispM / 0.05; // 5cm resolution
 
+          const nextPairId = (pairedCount || 0) + 1;
           onAddGcpPair({
-            id: pairedCount + 1,
-            label: `GCP Pair #${pairedCount + 1}`,
+            id: nextPairId,
+            label: `GCP Pair #${nextPairId}`,
             legacy: pendingLegacyGcp,
             drone: clickedPos,
             displacementMeters: Number(dispM.toFixed(2)),
@@ -368,11 +379,14 @@ function InteractiveMapHandler({
 
       // 3. Single GCP Placement
       if (enableSingleGcp && onAddSingleGcp) {
+        const nextId = (gcpPoints && gcpPoints.length > 0)
+          ? Math.max(...gcpPoints.map((p) => p.id)) + 1
+          : (singleGcpCount + 1);
         onAddSingleGcp({
-          id: singleGcpCount + 1,
+          id: nextId,
           lat: Number(e.latlng.lat.toFixed(6)),
           lng: Number(e.latlng.lng.toFixed(6)),
-          label: `GCP-${singleGcpCount + 1}`,
+          label: `GCP #${nextId}`,
         });
       }
     },
@@ -517,6 +531,49 @@ export default function MapViewer({
       setLockedGcp(null);
     }
   }, [gcpPoints, lockedGcp]);
+
+  // Universal GCP Click Handler (works smoothly across vector polygons, map canvas, and curtain)
+  const [pendingLegacyGcp, setPendingLegacyGcp] = useState<[number, number] | null>(null);
+
+  const handleGcpClickAtCoords = useCallback((coords: [number, number]) => {
+    if (pairedGcpMode && onAddGcpPair) {
+      if (!pendingLegacyGcp) {
+        setPendingLegacyGcp(coords);
+        toast("Step 1 recorded. Now click corresponding Drone landmark position.", { icon: "📍" });
+      } else {
+        const lat1 = pendingLegacyGcp[0];
+        const lon1 = pendingLegacyGcp[1];
+        const lat2 = coords[0];
+        const lon2 = coords[1];
+        const dy = (lat2 - lat1) * 111320;
+        const dx = (lon2 - lon1) * 111320 * Math.cos((lat1 * Math.PI) / 180);
+        const dispM = Math.sqrt(dx * dx + dy * dy);
+        const errPx = dispM / 0.05;
+        const nextPairId = (gcpPairs && gcpPairs.length > 0) ? Math.max(...gcpPairs.map((p) => p.id)) + 1 : 1;
+        onAddGcpPair({
+          id: nextPairId,
+          label: `GCP Pair #${nextPairId}`,
+          legacy: pendingLegacyGcp,
+          drone: coords,
+          displacementMeters: Number(dispM.toFixed(2)),
+          errorPixels: Number(errPx.toFixed(1)),
+        });
+        setPendingLegacyGcp(null);
+      }
+    } else if (onAddGcp) {
+      const nextId = (gcpPoints && gcpPoints.length > 0)
+        ? Math.max(...gcpPoints.map((p) => p.id)) + 1
+        : 1;
+      const newPt: GCPPoint = {
+        id: nextId,
+        lat: Number(coords[0].toFixed(6)),
+        lng: Number(coords[1].toFixed(6)),
+        label: `GCP #${nextId}`,
+      };
+      onAddGcp(newPt);
+      setLockedGcp(newPt);
+    }
+  }, [pairedGcpMode, onAddGcpPair, pendingLegacyGcp, gcpPairs, onAddGcp, gcpPoints]);
 
   const computeLatLngFromPixel = useCallback((pxX: number, pxY: number) => {
     const baseW = 1000;
@@ -939,6 +996,7 @@ export default function MapViewer({
 
   // Unified Mouse & Pan handlers
   const handleUnifiedMouseDown = (e: React.MouseEvent) => {
+    if (enableGcpPlacement) return;
     const target = e.target as HTMLElement;
     if (
       target.closest(".curtain-handle") ||
@@ -1030,35 +1088,12 @@ export default function MapViewer({
       const offX = (e.clientX - rect.left - centerX) / unifiedZoom;
       const offY = (e.clientY - rect.top - centerY) / unifiedZoom;
 
-      // Point 1: Map Boundary Restriction - Reject drops outside the raster map
-      const bounds = getUnifiedImageBounds();
-      if (bounds) {
-        const isInside = Math.abs(offX) <= bounds.halfW && Math.abs(offY) <= bounds.halfH;
-        if (!isInside) {
-          toast.error("GCP map boundary ke bahar nahi drop kar sakte!", { icon: "- " });
-          return;
-        }
-      }
-
       const dx_m = offX * activeGsd;
       const dy_m = -offY * activeGsd;
       const lat = Number((refCenterLat + (dy_m / 111320.0)).toFixed(6));
       const lon = Number((refCenterLon + (dx_m / (111320.0 * Math.cos((refCenterLat * Math.PI) / 180.0)))).toFixed(6));
 
-      const nextId = gcpPoints.length > 0 ? Math.max(...gcpPoints.map((p) => p.id)) + 1 : 1;
-      const newPt: GCPPoint = {
-        id: nextId,
-        lat,
-        lng: lon,
-        label: `GCP #${nextId}`,
-        offX: Math.round(offX * 100) / 100,
-        offY: Math.round(offY * 100) / 100,
-      };
-      if (onAddGcp) {
-        onAddGcp(newPt);
-      }
-      // Point 4: Freeze/lock coordinates in the bottom HUD immediately upon drop
-      setLockedGcp(newPt);
+      handleGcpClickAtCoords([lat, lon]);
       return;
     }
 
@@ -1138,19 +1173,7 @@ export default function MapViewer({
       const lat = Number((refCenterLat + (dy_m / 111320.0)).toFixed(6));
       const lon = Number((refCenterLon + (dx_m / (111320.0 * Math.cos((refCenterLat * Math.PI) / 180.0)))).toFixed(6));
 
-      const nextId = gcpPoints.length > 0 ? Math.max(...gcpPoints.map((p) => p.id)) + 1 : 1;
-      const newPt: GCPPoint = {
-        id: nextId,
-        lat,
-        lng: lon,
-        label: `GCP #${nextId}`,
-        offX: Math.round(offX * 100) / 100,
-        offY: Math.round(offY * 100) / 100,
-      };
-      if (onAddGcp) {
-        onAddGcp(newPt);
-      }
-      setLockedGcp(newPt);
+      handleGcpClickAtCoords([lat, lon]);
     }
   };
 
@@ -1282,7 +1305,7 @@ export default function MapViewer({
 
   // Left mouse down handler (starts panning ONLY left map)
   const handleLeftMouseDown = (e: React.MouseEvent) => {
-    if (!isCustomRasterComparison) return;
+    if (!isCustomRasterComparison || enableGcpPlacement) return;
     const target = e.target as HTMLElement;
     if (target.closest(".curtain-slider-handle") || target.closest(".curtain-drag-deck") || target.closest("button") || target.closest("input")) return;
     e.stopPropagation();
@@ -1297,7 +1320,7 @@ export default function MapViewer({
 
   // Right mouse down handler (starts panning ONLY right map)
   const handleRightMouseDown = (e: React.MouseEvent) => {
-    if (!isCustomRasterComparison) return;
+    if (!isCustomRasterComparison || enableGcpPlacement) return;
     const target = e.target as HTMLElement;
     if (target.closest(".curtain-slider-handle") || target.closest(".curtain-drag-deck") || target.closest("button") || target.closest("input")) return;
     e.stopPropagation();
@@ -1666,13 +1689,28 @@ export default function MapViewer({
     const props = feature.properties;
     if (!props) return;
 
-    layer.on("click", (e) => {
+    layer.on("click", (e: any) => {
       // Locked during manual boundary editing to prevent accidental selection switch
       if (enableVertexEdit) {
         L.DomEvent.stopPropagation(e);
         return;
       }
+      // When GCP placement mode is active, clicking on a parcel drops a GCP and avoids selection switch
+      if (enableGcpPlacement) {
+        L.DomEvent.stopPropagation(e);
+        (layer as any).closePopup?.();
+        if (e.latlng) {
+          handleGcpClickAtCoords([Number(e.latlng.lat.toFixed(6)), Number(e.latlng.lng.toFixed(6))]);
+        }
+        return;
+      }
       if (onParcelClick) onParcelClick(props.id || props.khasra_no);
+    });
+
+    layer.on("popupopen", () => {
+      if (enableGcpPlacement || enableVertexEdit) {
+        layer.closePopup();
+      }
     });
 
     const band = props.confidence_band;
@@ -2960,6 +2998,8 @@ export default function MapViewer({
                     enableSingleGcp={enableGcpPlacement && !pairedGcpMode}
                     onAddSingleGcp={onAddGcp}
                     singleGcpCount={gcpPoints.length}
+                    gcpPoints={gcpPoints}
+                    onGcpClick={handleGcpClickAtCoords}
                     enableBbox={enableBboxPrompt}
                     onBboxSelected={onBboxSelected}
                     enablePairedGcp={pairedGcpMode}
@@ -3759,6 +3799,7 @@ export default function MapViewer({
           <MapContainer
             center={center}
             zoom={zoom}
+            className={enableGcpPlacement ? "gcp-placement-mode" : ""}
             style={{ width: "100%", height: "100%", background: baseLayer === "isolated" ? "#F8FAFC" : "#0F172A" }}
             scrollWheelZoom={true}
             zoomControl={false}
@@ -3885,10 +3926,34 @@ export default function MapViewer({
             {!pairedGcpMode && gcpPoints.map((gcp) => (
               <Marker key={gcp.id} position={[gcp.lat, gcp.lng]} icon={GcpIcon}>
                 <Popup>
-                  <div style={{ padding: 4, fontSize: "0.85rem", color: "#0F172A" }}>
-                    <strong>{gcp.label || `GCP Point #${gcp.id}`}</strong>
-                    <div style={{ color: "#475569", marginTop: 2, fontSize: "0.78rem" }}>
-                      Lat: {gcp.lat.toFixed(6)}, Lng: {gcp.lng.toFixed(6)}
+                  <div style={{ padding: "6px 8px", fontSize: "0.85rem", color: "#0F172A", minWidth: 170 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                      <strong style={{ color: "#0D9488" }}>{gcp.label || `GCP Point #${gcp.id}`}</strong>
+                      {onRemoveGcp && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onRemoveGcp(gcp.id);
+                            if (lockedGcp?.id === gcp.id) setLockedGcp(null);
+                          }}
+                          style={{
+                            background: "#FEE2E2",
+                            color: "#DC2626",
+                            border: "1px solid #FECACA",
+                            borderRadius: 4,
+                            padding: "2px 7px",
+                            fontSize: "0.7rem",
+                            fontWeight: 800,
+                            cursor: "pointer",
+                          }}
+                          title={`Delete GCP #${gcp.id}`}
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                    <div style={{ color: "#475569", marginTop: 2, fontSize: "0.78rem", fontFamily: "monospace" }}>
+                      Lat: {gcp.lat.toFixed(6)}° N<br />Lng: {gcp.lng.toFixed(6)}° E
                     </div>
                     <div style={{ fontSize: "0.75rem", color: "#0D9488", fontWeight: 700, marginTop: 4 }}>
                       ✓ Locked for Thin-Plate Spline Warping
@@ -3905,6 +3970,8 @@ export default function MapViewer({
                 setLockedGcp(pt);
               }}
               singleGcpCount={gcpPoints.length}
+              gcpPoints={gcpPoints}
+              onGcpClick={handleGcpClickAtCoords}
               enableBbox={enableBboxPrompt}
               onBboxSelected={onBboxSelected}
               enablePairedGcp={pairedGcpMode}

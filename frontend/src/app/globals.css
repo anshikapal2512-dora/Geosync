@@ -681,3 +681,33 @@ select option {
 .khasra-permanent-label::before {
   display: none !important;
 }
+
+/* ───────────────── GCP Placement Active Cursor & Animations ───────────────── */
+.gcp-placement-mode,
+.gcp-placement-mode.leaflet-container,
+.gcp-placement-mode .leaflet-container,
+.gcp-placement-mode .leaflet-interactive,
+.gcp-placement-mode .leaflet-pane,
+.gcp-placement-mode svg {
+  cursor: crosshair !important;
+}
+
+@keyframes gcpPulseRing {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+  70% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 10px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+.gcp-pulse {
+  animation: gcpPulseRing 2s infinite;
+}
+

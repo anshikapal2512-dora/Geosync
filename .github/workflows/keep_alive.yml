@@ -1,0 +1,36 @@
+name: Keep Supabase Alive
+
+on:
+  schedule:
+    # Runs every 3 days at 00:00 UTC to prevent Supabase 7-day auto-pause
+    - cron: '0 0 */3 * *'
+  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
+
+jobs:
+  ping-supabase:
+    name: Ping Supabase Database & REST API
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Secrets
+        run: |
+          if [ -z "${{ secrets.SUPABASE_URL }}" ] || [ -z "${{ secrets.SUPABASE_ANON_KEY }}" ]; then
+            echo "::error::Missing repository secrets SUPABASE_URL or SUPABASE_ANON_KEY. Please configure them in repository Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+      - name: Send Keep-Alive Request
+        run: |
+          echo "Sending keep-alive ping to Supabase..."
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            "${{ secrets.SUPABASE_URL }}/rest/v1/")
+          
+          echo "Supabase responded with HTTP status: $HTTP_STATUS"
+          
+          # Status 200 (OK) or 404/204/something indicating server response counts as activity
+          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 500 ]; then
+            echo "✅ Supabase project is active and successfully pinged!"
+          else
+            echo "::warning::Received unexpected status $HTTP_STATUS from Supabase"
+          fi
